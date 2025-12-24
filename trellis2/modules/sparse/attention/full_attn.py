@@ -3,11 +3,9 @@ import torch
 from .. import VarLenTensor
 from .. import config
 
-
 __all__ = [
     'sparse_scaled_dot_product_attention',
 ]
-
 
 @overload
 def sparse_scaled_dot_product_attention(qkv: VarLenTensor) -> VarLenTensor:
@@ -182,17 +180,16 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
         mask = xops.fmha.BlockDiagonalMask.from_seqlens(q_seqlen, kv_seqlen)
         out = xops.memory_efficient_attention(q, k, v, mask)[0]
     elif config.ATTN == 'flash_attn':
-        if 'flash_attn' not in globals():
-            import flash_attn
+        # AMD ROCm Redirect: Bypassing missing varlen_qkvpacked_func
         cu_seqlens_q = torch.cat([torch.tensor([0]), torch.cumsum(torch.tensor(q_seqlen), dim=0)]).int().to(device)
-        if num_all_args in [2, 3]:
-            cu_seqlens_kv = torch.cat([torch.tensor([0]), torch.cumsum(torch.tensor(kv_seqlen), dim=0)]).int().to(device)
+        
         if num_all_args == 1:
-            out = flash_attn.flash_attn_varlen_qkvpacked_func(qkv, cu_seqlens_q, max(q_seqlen))
+            q, k, v = qkv.unbind(dim=1)
         elif num_all_args == 2:
-            out = flash_attn.flash_attn_varlen_kvpacked_func(q, kv, cu_seqlens_q, cu_seqlens_kv, max(q_seqlen), max(kv_seqlen))
-        elif num_all_args == 3:
-            out = flash_attn.flash_attn_varlen_func(q, k, v, cu_seqlens_q, cu_seqlens_kv, max(q_seqlen), max(kv_seqlen))
+            k, v = kv.unbind(dim=1)
+        
+        # Use our new sparse-aware naive function
+        out = _naive_sparse_sdpa(q, k, v, cu_seqlens_q)
     elif config.ATTN == 'flash_attn_3':
         if 'flash_attn_3' not in globals():
             import flash_attn_interface as flash_attn_3
@@ -218,3 +215,29 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
         return s.replace(out)
     else:
         return out.reshape(N, L, H, -1)
+
+def _naive_sparse_sdpa(q, k, v, cu_seqlens, softmax_scale=None, causal=False):
+    if softmax_scale is None:
+        softmax_scale = q.shape[-1] ** -0.5
+    
+    outputs = []
+    for i in range(len(cu_seqlens) - 1):
+        start, end = cu_seqlens[i], cu_seqlens[i+1]
+        
+        # Extract and permute to [Heads, Length, Dim]
+        qi = q[start:end].permute(1, 0, 2)
+        ki = k[start:end].permute(1, 0, 2)
+        vi = v[start:end].permute(1, 0, 2)
+        
+        # Manual Attention calculation
+        attn = torch.matmul(qi, ki.transpose(-2, -1)) * softmax_scale
+        if causal:
+            L = qi.size(1)
+            mask = torch.triu(torch.ones(L, L, device=qi.device), diagonal=1).bool()
+            attn.masked_fill_(mask, float('-inf'))
+            
+        attn = torch.softmax(attn, dim=-1)
+        out_i = torch.matmul(attn, vi)
+        outputs.append(out_i.permute(1, 0, 2))
+        
+    return torch.cat(outputs, dim=0)

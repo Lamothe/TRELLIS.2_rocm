@@ -1,0 +1,1 @@
+#include <hipsolver/hipsolver.h>

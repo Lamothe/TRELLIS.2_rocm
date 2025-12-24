@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Find the real hipcc executable
+REAL_HIPCC=$(type -P hipcc)
+
+if [ -z "$REAL_HIPCC" ];
+then
+    echo "Error: hipcc not found in PATH."
+    exit 1
+fi
+
+# Filter arguments
+CLEAN_ARGS=()
+
+for arg in "$@";
+do
+    case "$arg" in
+        -fcf-protection*)
+            # Skip Fedora hardening flags
+            ;;
+        *)
+            CLEAN_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+# Force -Wno-narrowing to fix o-voxel compliance issues
+CLEAN_ARGS+=("-Wno-narrowing")
+
+# Execute
+echo Executing fixed hipcc: "$REAL_HIPCC" "${CLEAN_ARGS[@]}"
+exec "$REAL_HIPCC" "${CLEAN_ARGS[@]}"
