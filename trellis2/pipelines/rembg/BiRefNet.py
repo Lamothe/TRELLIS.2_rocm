@@ -1,42 +1,36 @@
 from typing import *
-from transformers import AutoModelForImageSegmentation
-import torch
-from torchvision import transforms
 from PIL import Image
-
+import rembg
+import onnxruntime as ort
 
 class BiRefNet:
+    """
+    Shim for BiRefNet that FORCES CPU execution.
+    This is critical to prevent ONNX Runtime from initializing a ROCm context 
+    that conflicts with PyTorch's native gfx1151 context.
+    """
     def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):
-        self.model = AutoModelForImageSegmentation.from_pretrained(
-            model_name, trust_remote_code=True
-        )
-        self.model.eval()
-        self.transform_image = transforms.Compose(
-            [
-                transforms.Resize((1024, 1024)),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-            ]
-        )
-    
+        # STRICTLY force CPU. Do not allow ROCMExecutionProvider.
+        providers = ['CPUExecutionProvider']
+        
+        print(f"[BiRefNet-Shim] Forcing ONNX Providers: {providers}")
+
+        try:
+            self.session = rembg.new_session(model_name="birefnet-general", providers=providers)
+            print("[BiRefNet-Shim] Successfully loaded 'birefnet-general' on CPU.")
+        except Exception as e:
+            print(f"[BiRefNet-Shim] 'birefnet-general' failed ({e}). Fallback to 'u2net'.")
+            self.session = rembg.new_session("u2net", providers=providers)
+
     def to(self, device: str):
-        self.model.to(device)
+        pass
 
     def cuda(self):
-        self.model.cuda()
+        pass
 
     def cpu(self):
-        self.model.cpu()
+        pass
         
     def __call__(self, image: Image.Image) -> Image.Image:
-        image_size = image.size
-        input_images = self.transform_image(image).unsqueeze(0).to("cuda")
-        # Prediction
-        with torch.no_grad():
-            preds = self.model(input_images)[-1].sigmoid().cpu()
-        pred = preds[0].squeeze()
-        pred_pil = transforms.ToPILImage()(pred)
-        mask = pred_pil.resize(image_size)
-        image.putalpha(mask)
-        return image
-    
+        # This now runs purely on CPU RAM, leaving the GPU free for Trellis
+        return rembg.remove(image, session=self.session)

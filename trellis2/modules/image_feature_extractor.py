@@ -32,28 +32,34 @@ class DinoV2FeatureExtractor:
     def __call__(self, image: Union[torch.Tensor, List[Image.Image]]) -> torch.Tensor:
         """
         Extract features from the image.
-        
-        Args:
-            image: A batch of images as a tensor of shape (B, C, H, W) or a list of PIL images.
-        
-        Returns:
-            A tensor of shape (B, N, D) where N is the number of patches and D is the feature dimension.
         """
+        # --- NATIVE STRIX HALO FIX ---
+        # torchvision.transforms binaries don't support gfx1151 yet.
+        # We must keep the image on CPU during normalization/transform,
+        # and only move to CUDA *after* the transform is done.
+        
         if isinstance(image, torch.Tensor):
             assert image.ndim == 4, "Image tensor should be batched (B, C, H, W)"
+            # Ensure input is on CPU for the transform
+            image = image.cpu()
         elif isinstance(image, list):
             assert all(isinstance(i, Image.Image) for i in image), "Image list should be list of PIL images"
-            image = [i.resize((518, 518), Image.LANCZOS) for i in image]
+            image = [i.resize((self.image_size, self.image_size), Image.LANCZOS) for i in image]
             image = [np.array(i.convert('RGB')).astype(np.float32) / 255 for i in image]
             image = [torch.from_numpy(i).permute(2, 0, 1).float() for i in image]
-            image = torch.stack(image).cuda()
+            # STACK ON CPU (removed .cuda() here)
+            image = torch.stack(image)
         else:
             raise ValueError(f"Unsupported type of image: {type(image)}")
         
-        image = self.transform(image).cuda()
-        features = self.model(image, is_training=True)['x_prenorm']
-        patchtokens = F.layer_norm(features, features.shape[-1:])
-        return patchtokens
+        # Run Transform on CPU (Safe)
+        image = self.transform(image)
+        
+        # NOW move to GPU for the heavy lifting (DINOv3)
+        image = image.cuda()
+        
+        features = self.extract_features(image)
+        return features
     
 
 class DinoV3FeatureExtractor:
@@ -62,7 +68,11 @@ class DinoV3FeatureExtractor:
     """
     def __init__(self, model_name: str, image_size=512):
         self.model_name = model_name
-        self.model = DINOv3ViTModel.from_pretrained(model_name)
+        self.model = DINOv3ViTModel.from_pretrained(
+            model_name, 
+            low_cpu_mem_usage=False,
+            device_map=None
+        )
         self.model.eval()
         self.image_size = image_size
         self.transform = transforms.Compose([
@@ -113,6 +123,6 @@ class DinoV3FeatureExtractor:
         else:
             raise ValueError(f"Unsupported type of image: {type(image)}")
         
-        image = self.transform(image).cuda()
+        image = self.transform(image.cpu() if isinstance(image, torch.Tensor) else image); image = image.cuda()
         features = self.extract_features(image)
         return features

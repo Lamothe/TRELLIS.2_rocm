@@ -10,9 +10,9 @@
 constexpr size_t kInvalidIndex = std::numeric_limits<size_t>::max();
 
 
-struct float3 {float x, y, z; float& operator[](int i) {return (&x)[i];}};
-struct int3 {int x, y, z; int& operator[](int i) {return (&x)[i];}};
-struct int4 {int x, y, z, w; int& operator[](int i) {return (&x)[i];}};
+struct local_float3 {float x, y, z; float& operator[](int i) {return (&x)[i];}};
+struct local_int3 {int x, y, z; int& operator[](int i) {return (&x)[i];}};
+struct local_int4 {int x, y, z, w; int& operator[](int i) {return (&x)[i];}};
 struct bool3 {bool x, y, z; bool& operator[](int i) {return (&x)[i];}};
 
 
@@ -64,7 +64,7 @@ void intersect_qef(
     const Eigen::Vector3i& grid_max,
     const std::vector<Eigen::Vector3f>& triangles, // 3 vertices per triangle
     std::unordered_map<VoxelCoord, size_t>& hash_table, // Hash table for voxel lookup
-    std::vector<int3>& voxels, // Output: Voxel coordinates
+    std::vector<local_int3>& voxels, // Output: Voxel coordinates
     std::vector<Eigen::Vector3f>& means, // Output: Mean vertex positions for each voxel
     std::vector<float>& cnt, // Output: Number of intersections for each voxel
     std::vector<bool3>& intersected, // Output: Whether edge of voxel intersects with triangle
@@ -304,7 +304,7 @@ void boundry_qef(
         // Calculate the QEF for the edge (boundary) defined by v0 and v1
         Eigen::Vector3d dir(v1.x() - v0.x(), v1.y() - v0.y(), v1.z() - v0.z());
         double segment_length = dir.norm();
-        if (segment_length < 1e-6d) continue; // Skip degenerate edges (zero-length)
+        if (segment_length < 1e-6) continue; // Skip degenerate edges (zero-length)
         dir.normalize();  // unit direction vector
 
         // Projection matrix orthogonal to the direction: I - d d^T
@@ -334,7 +334,7 @@ void boundry_qef(
 
         Eigen::Vector3d tMax, tDelta;
         for (int axis = 0; axis < 3; ++axis) {
-            if (dir[axis] == 0.0d) {
+            if (dir[axis] == 0.0) {
                 tMax[axis] = std::numeric_limits<double>::infinity();
                 tDelta[axis] = std::numeric_limits<double>::infinity();
             } else {
@@ -383,9 +383,9 @@ void boundry_qef(
 }
 
 
-std::array<int3, 2> quad_to_2tri(
-    const std::vector<float3>& vertices,
-    const int4& quad_indices
+std::array<local_int3, 2> quad_to_2tri(
+    const std::vector<local_float3>& vertices,
+    const local_int4& quad_indices
 ) {
     int ia = quad_indices.x;
     int ib = quad_indices.y;
@@ -408,22 +408,22 @@ std::array<int3, 2> quad_to_2tri(
     float angle_bd = std::acos(std::clamp(n_abd.dot(n_bcd), -1.0f, 1.0f));
 
     if (angle_ac <= angle_bd) {
-        return {int3{ia, ib, ic}, int3{ia, ic, id}};
+        return {local_int3{ia, ib, ic}, local_int3{ia, ic, id}};
     } else {
-        return {int3{ia, ib, id}, int3{ib, ic, id}};
+        return {local_int3{ia, ib, id}, local_int3{ib, ic, id}};
     }
 }
 
 
 void face_from_dual_vertices(
     const std::unordered_map<VoxelCoord, size_t>& hash_table,
-    const std::vector<int3>& voxels,
-    const std::vector<float3>& dual_vertices,
+    const std::vector<local_int3>& voxels,
+    const std::vector<local_float3>& dual_vertices,
     const std::vector<bool3>& intersected,
-    std::vector<int3>& face_indices
+    std::vector<local_int3>& face_indices
 ) {
     for (int i = 0; i < dual_vertices.size(); ++i) {
-        int3 coord = voxels[i];
+        local_int3 coord = voxels[i];
         bool3 is_intersected = intersected[i];
 
         // Check existence of neighboring 6 voxels
@@ -438,19 +438,19 @@ void face_from_dual_vertices(
 
         // xy-plane
         if (is_intersected[2] && neigh_indices[0] != kInvalidIndex && neigh_indices[1] != kInvalidIndex && neigh_indices[2] != kInvalidIndex) {
-            int4 quad_indices{i, neigh_indices[0], neigh_indices[2], neigh_indices[1]};
+            local_int4 quad_indices{i, neigh_indices[0], neigh_indices[2], neigh_indices[1]};
             auto tri_indices = quad_to_2tri(dual_vertices, quad_indices);
             face_indices.insert(face_indices.end(), tri_indices.begin(), tri_indices.end());
         }
         // yz-plane
         if (is_intersected[0] && neigh_indices[1] != kInvalidIndex && neigh_indices[3] != kInvalidIndex && neigh_indices[5] != kInvalidIndex) {
-            int4 quad_indices{i, neigh_indices[1], neigh_indices[5], neigh_indices[3]};
+            local_int4 quad_indices{i, neigh_indices[1], neigh_indices[5], neigh_indices[3]};
             auto tri_indices = quad_to_2tri(dual_vertices, quad_indices);
             face_indices.insert(face_indices.end(), tri_indices.begin(), tri_indices.end());
         }
         // xz-plane
         if (is_intersected[1] && neigh_indices[0] != kInvalidIndex && neigh_indices[3] != kInvalidIndex && neigh_indices[4] != kInvalidIndex) {
-            int4 quad_indices{i, neigh_indices[0], neigh_indices[4], neigh_indices[3]};
+            local_int4 quad_indices{i, neigh_indices[0], neigh_indices[4], neigh_indices[3]};
             auto tri_indices = quad_to_2tri(dual_vertices, quad_indices);
             face_indices.insert(face_indices.end(), tri_indices.begin(), tri_indices.end());
         }
@@ -488,7 +488,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> mesh_to_flexible_dual_gr
     const int* grid_range_ptr = grid_range.data_ptr<int>();
     clock_t start, end;
     std::unordered_map<VoxelCoord, size_t> hash_table;
-    std::vector<int3> voxels; // Voxel coordinates
+    std::vector<local_int3> voxels; // Voxel coordinates
     std::vector<Eigen::Vector3f> means; // Mean vertex positions for each voxel
     std::vector<float> cnt; // Number of intersections for each voxel
     std::vector<bool3> intersected; // Indicate whether edges of voxels intersect with surface
@@ -560,9 +560,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> mesh_to_flexible_dual_gr
 
     // Solve the QEF system to obtain final dual vertices
     start = clock();
-    std::vector<float3> dual_vertices(voxels.size());
+    std::vector<local_float3> dual_vertices(voxels.size());
     for (int i = 0; i < voxels.size(); ++i) {
-        int3 coord = voxels[i];
+        local_int3 coord = voxels[i];
         Eigen::Matrix4f Q = qefs[i];
         float min_corner[3] = {
             coord.x * e_voxel_size.x(),
@@ -761,7 +761,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> mesh_to_flexible_dual_gr
         }
 
         // Store the dual vertex and voxel grid coordinates
-        dual_vertices[i] = float3{v_new.x(), v_new.y(), v_new.z()};
+        dual_vertices[i] = local_float3{v_new.x(), v_new.y(), v_new.z()};
     }
     end = clock();
     if (timing) std::cout << "Dual vertices computation took " << double(end - start) / CLOCKS_PER_SEC << " seconds." << std::endl;

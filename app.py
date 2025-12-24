@@ -8,6 +8,8 @@ import shutil
 import cv2
 from typing import *
 import torch
+from trellis2.modules.sparse.conv import config as sparse_config; sparse_config.CONV = 'spconv'
+torch.backends.cudnn.enabled = False
 import numpy as np
 from PIL import Image
 import base64

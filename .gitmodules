@@ -1,3 +1,18 @@
 [submodule "o-voxel/third_party/eigen"]
 	path = o-voxel/third_party/eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "extensions/CuMesh_rocm"]
+	path = extensions/CuMesh_rocm
+	url = git@github.com:Lamothe/CuMesh_rocm.git
+[submodule "extensions/flash-attention"]
+	path = extensions/flash-attention
+	url = https://github.com/ROCm/flash-attention.git
+[submodule "extensions/nvdiffrast_rocm"]
+	path = extensions/nvdiffrast_rocm
+	url = git@github.com:Lamothe/nvdiffrast_rocm.git
+[submodule "extensions/triton"]
+	path = extensions/triton
+	url = https://github.com/openai/triton.git
+[submodule "extensions/FlexGEMM_rocm"]
+	path = extensions/FlexGEMM_rocm
+	url = git@github.com:Lamothe/FlexGEMM_rocm.git
